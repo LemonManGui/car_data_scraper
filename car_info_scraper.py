@@ -3,19 +3,34 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from datetime import datetime
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 
 # Set up Chrome WebDriver
 chrome_options = Options()
 #chrome_options.add_argument("--headless")  # Run in headless mode for no browser UI
-service = Service("/Users/gui/Desktop/chromedriver")  # Make sure to replace this with the path to your chromedriver
+service = Service("/usr/lib/chromium-browser/chromedriver")  # Update path to your chromedriver
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
 BASE_URL = "https://www.carplus.es/coches-segunda-mano/"
 
 def scrape_main_page(url):
-    driver.get(url)
-    time.sleep(3)  # Wait for the page to load
+
+    # 1) Accept cookies if button is present
+    try:
+        wait = WebDriverWait(driver, 10)
+        cookie_button = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button.rgc-button.js-rgc-accept-all"))
+        )
+        cookie_button.click()
+        # Brief pause after click
+        time.sleep(1)
+    except Exception as e:
+        print("Cookie accept button not found or not clickable:", e)
+
+    # 2) Wait for page content to load
+    time.sleep(3)
 
     # Find all car listing links on the main page
     car_links = []
@@ -24,13 +39,14 @@ def scrape_main_page(url):
         link = car.find_element(By.TAG_NAME, 'a').get_attribute('href')
         if link:
             car_links.append(link)
-    
+
     return car_links
+
 
 def scrape_car_page(url):
     driver.get(url)
     time.sleep(1)  # Wait for the page to load
-    
+
     car_details = {}
 
     # Title information
@@ -49,7 +65,6 @@ def scrape_car_page(url):
     # Price
     price_group = driver.find_element(By.CLASS_NAME, 'price-group')
     car_details['Price'] = features[1].text.strip()
-    #price_group.find_element(By.CLASS_NAME, 'previous-price').text.strip()
 
     # Colors and consumption
     specs = driver.find_elements(By.CLASS_NAME, 'specification--label')
@@ -64,44 +79,48 @@ def scrape_car_page(url):
 
     return car_details
 
-def get_current_page():
-    # Locate the pagination label (e.g., "Pagina 2 - 19")
-    pagination_label = driver.find_element(By.CLASS_NAME, "pagination--label")  # Update selector if necessary
-    page_text = pagination_label.text  # Text will be something like "Pagina 2 - 19"
-    current_page = int(page_text.split()[1])  # Extract the current page number (e.g., 2 from "Pagina 2")
-    return current_page
 
-def increment_page_number():
-    # Get the current page number
-    current_page = get_current_page()
+def click_next_page():
+    """
+    Clicks the 'Siguiente' button to move to the next page.
+    If there's no next page or the button is not found, it will raise an exception.
+    """
+    time.sleep(2)
+    next_button = driver.find_element(By.CSS_SELECTOR, "button.next-button")
+    time.sleep(2)
+    driver.execute_script("arguments[0].click();", next_button)
+    time.sleep(2)  # Adjust sleep if needed
 
-    # Increment the page number by 1
-    new_page = current_page + 1
-
-    # Update the pagination HTML with the new page number
-    pagination_label = driver.find_element(By.CLASS_NAME, "pagination--label")  # Locate the pagination element
-    page_text = pagination_label.text
-
-    # Replace the old page number with the incremented page number
-    new_text = page_text.replace(f"Pagina {current_page}", f"Pagina {new_page}")
-
-    # Update the text of the pagination label element
-    driver.execute_script("arguments[0].textContent = arguments[1];", pagination_label, new_text)
 
 def main():
-    car_links = scrape_main_page(BASE_URL)
     car_data = []
 
-    
+    # Visit the initial page and scrape
+    page = 1
+    driver.get(BASE_URL)
+    while True:
+        print(f"Scraping page {page}...")
+        car_links = scrape_main_page(BASE_URL)
+        if not car_links:
+            # No cars found; break out of loop
+            break
 
-    for link in car_links:
-        if len(car_data) % 16 == 0 and len(car_data) != 0:
-            increment_page_number()
+        for link in car_links:
+            try:
+                car_details = scrape_car_page(link)
+                car_data.append(car_details)
+            except Exception as e:
+                print(f"Error scraping {link}: {e}")
+
+        # Try to go to the next page
         try:
-            car_details = scrape_car_page(link)
-            car_data.append(car_details)
+            driver.get(BASE_URL)
+            for i in range(page):
+                click_next_page()
+            page += 1
         except Exception as e:
-            print(f"Error scraping {link}: {e}")
+            print("No more pages or error clicking next button.", e)
+            break
 
     # Output the collected data
     for car in car_data:
@@ -109,7 +128,7 @@ def main():
 
     print(len(car_data))
 
+
 if __name__ == "__main__":
     main()
     driver.quit()  # Quit the browser session after scraping
-
